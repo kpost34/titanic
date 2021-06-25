@@ -1,39 +1,43 @@
-# titanic
+# **Titanic Machine Learning Project**
+Predict passenger survival on the Titanic via machine learning.
 
-Welcome to ProjectTemplate!
+## Introduction
+The goal of this project was to build a machine learning model from a sample of the Titanic passenger data and assess its predictive ability on a test sample. The training data had 12 variables (i.e., passenger id, survival, and 10 predictors) with varying levels of missing data. Feature engineering was used to extract information from character variables. The process of data cleaning, feature engineering, model development, and model testing is described in a report.
 
-This file introduces you to ProjectTemplate, but you should eventually replace
-the contents of this file with an introduction to your project. People who
-work with your data in the future will thank you for it, including your future
-self.
 
-ProjectTemplate is an R package that helps you organize your statistical
-analysis projects. Since you're reading this file, we'll assume that you've
-already called `create.project()` to set up this project and all of its
-contents.
+## Technologies
+* RStudio 1.2.5033
+* R 3.6.2 ("Dark and Stormy Night")
+  + here 1.0.0
+  + tidyverse 1.3.0
+  + visdat 0.5.3
+  + skimr 2.1
+  + janitor 2.0.1
+  + tidymodels 0.1.2
+  + cowplot 1.0.0
+  + PeformanceAnalytics 2.0.4
+  + GGally 2.1.0
+  + kableExtra 1.3.1
+  + kernlab 0.9-29
 
-To load your new project, you'll first need to `setwd()` into the directory
-where this README file is located. Then you need to run the following two
-lines of R code:
 
-	library('ProjectTemplate')
-	load.project()
+## Future updates
+- [x] Read in raw data
+- [x] Clean data
+- [x] Impute missing data
+- [x] Check data
+- [x] Engineer features
+- [x] Save tidy data
+- [x] EDA
+- [x] Build model
+- [x] Fit model
+- [x] Cross-validate
+- [x] Tune model
+- [x] Test model
+- [] Write up results
 
-After you enter the second line of code, you'll see a series of automated
-messages as ProjectTemplate goes about doing its work. This work involves:
-* Reading in the global configuration file contained in `config`.
-* Loading any R packages you listed in the configuration file.
-* Reading in any datasets stored in `data` or `cache`.
-* Preprocessing your data using the files in the `munge` directory.
 
-Once that's done, you can execute any code you'd like. For every analysis
-you create, we'd recommend putting a separate file in the `src` directory.
-If the files start with the two lines mentioned above:
-
-	library('ProjectTemplate')
-	load.project()
-
-You'll have access to all of your data, already fully preprocessed, and
-all of the libraries you want to use.
-
-For more details about ProjectTemplate, see http://projecttemplate.net
+#### **Project Creator: Keith Post**
++ [Github Profile](https://github.com/kpost34) 
++ [LinkedIN Profile](https://www.linkedin.com/in/keith-post/)
++ [Email](mailto:keithhpost@gmail.com)
