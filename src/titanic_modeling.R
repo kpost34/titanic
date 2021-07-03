@@ -4,7 +4,6 @@ library(here)
 library(rsample)
 library(dplyr)
 library(recipes)
-library(rsample)
 library(parsnip)
 library(kernlab)
 library(workflows)
@@ -15,126 +14,110 @@ library(forcats)
 library(visdat)
 library(stringr)
 library(skimr)
+library(vip)
 
 
 #IV. Data modeling
 #****************
 #import cleaned and tidied data as a .csv to a tibble
 f_titanic<-read_csv(here("data","tidy_data","tidy_train.csv"),
-         col_types="fifniinfffff")
+         col_types="fiffnnfffff")
 
 #re-level factors
 f_titanic$pclass<-fct_relevel(f_titanic$pclass,c("1","2","3"))
 f_titanic$ticket_cat<-fct_relevel(f_titanic$ticket_cat,c("under_10k",
-                                  "10k_up",
-                                  "100k",
-                                  "200k",
-                                  "300k",
-                                  "mil",
-                                  "A",
-                                  "C",
-                                  "F",
-                                  "P",
-                                  "SC",
-                                  "SO",
-                                  "SOT",
-                                  "STO",
-                                  "W",
-                                  "other"))
+                                 "10k_up",
+                                 "100k",
+                                 "200k",
+                                 "300k",
+                                 "mil",
+                                 "A",
+                                 "C",
+                                 "P",
+                                 "SC",
+                                 "SOT",
+                                 "STO",
+                                 "other"))
 
 #1-create cross-validation samples with rsample
-set.seed(25)
-vfold_titanic<-vfold_cv(data=f_titanic,v=4,strata="survived")
+set.seed(27)
+vfold_titanic<-vfold_cv(data=f_titanic,v=4)
 vfold_titanic
 pull(vfold_titanic,splits)
+
 
 #2-create recipe
 titanic_recipe<-recipe(f_titanic) %>%
   update_role(passenger_id,new_role="id variable") %>% 
-  update_role(c(pclass:sex_marital_status),new_role="predictor") %>% 
+  update_role(pclass:fam_size,new_role="predictor") %>% 
   update_role(survived,new_role="outcome")
 titanic_recipe
 
+
 #3-use parsnip() to specify model
+#logistic model
 titanic_mod_log<-logistic_reg() %>%
   set_mode("classification") %>%
   set_engine("glm") 
 titanic_mod_log
 
-
-titanic_mod_rf<-rand_forest() %>%
-  set_mode("classification") %>%
-  set_engine("randomForest")
-titanic_mod_rf
-
-
+#svm m
 titanic_mod_svm<-svm_poly() %>%
   set_mode("classification") %>%
   set_engine("kernlab")
 titanic_mod_svm
 
+
 #4-make a workflow
+#logistic model
 titanic_mod_log_wflow<-workflow() %>%
   add_recipe(titanic_recipe) %>%
   add_model(titanic_mod_log)
 titanic_mod_log_wflow
 
-
-titanic_mod_rf_wflow<-workflow() %>%
-  add_recipe(titanic_recipe) %>%
-  add_model(titanic_mod_rf)
-titanic_mod_rf_wflow
-
-
+#svm 
 titanic_mod_svm_wflow<-workflow() %>%
   add_recipe(titanic_recipe) %>%
   add_model(titanic_mod_svm)
 titanic_mod_svm_wflow
 
+
 #5-fit model
-titanic_mod_log_wflow_fit<-fit(titanic_mod_log_wflow,data=f_titanic)
+titanic_mod_log_wflow_fit<-parsnip::fit(titanic_mod_log_wflow,data=f_titanic) #log reg
 
-titanic_mod_rf_wflow_fit<-fit(titanic_mod_rf_wflow,data=f_titanic)
+titanic_mod_svm_wflow_fit<-parsnip::fit(titanic_mod_svm_wflow,data=f_titanic) #svm
 
-titanic_mod_svm_wflow_fit<-fit(titanic_mod_svm_wflow,data=f_titanic)
 
 #6-get predicted values using predict() and assess their accuracy
-pred_titanic_log<-predict(titanic_mod_log_wflow_fit,new_data=f_titanic)
+pred_titanic_log<-predict(titanic_mod_log_wflow_fit,new_data=f_titanic) #log reg
 
-pred_titanic_rf<-predict(titanic_mod_rf_wflow_fit,new_data=f_titanic)
+pred_titanic_svm<-predict(titanic_mod_svm_wflow_fit,new_data=f_titanic) #svm
 
-pred_titanic_svm<-predict(titanic_mod_svm_wflow_fit,new_data=f_titanic)
 
 #7-compare predicted and actual variables
 accuracy(f_titanic,
-         truth=survived,estimate=pred_titanic_log$.pred_class) #82.3% accurate
+         truth=survived,estimate=pred_titanic_log$.pred_class) #82.8% accurate
 count(f_titanic,survived) #549-342 dead-survived (actual)
-count(pred_titanic_log,.pred_class) #575-316 dead-survived (predicted)
+count(pred_titanic_log,.pred_class) #580-311 dead-survived (predicted)
 
 accuracy(f_titanic,
-         truth=survived,estimate=pred_titanic_rf$.pred_class) #94.8% accurate
+         truth=survived,estimate=pred_titanic_svm$.pred_class) #81.0% accurate
 count(f_titanic,survived) #549-342 dead-survived (actual)
-count(pred_titanic_rf,.pred_class) #575-316 dead-survived (predicted)
+count(pred_titanic_svm,.pred_class) #588-303 dead-survived (predicted)
 
-accuracy(f_titanic,
-         truth=survived,estimate=pred_titanic_svm$.pred_class) #80.6% accurate
-count(f_titanic,survived) #549-342 dead-survived (actual)
-count(pred_titanic_svm,.pred_class) #578-313 dead-survived (predicted)
 
 #8-fit model to cross-validation folds
-set.seed(34)
+set.seed(523)
 resample_log_fit<-fit_resamples(titanic_mod_log_wflow,vfold_titanic)
-collect_metrics(resample_log_fit) #80.2% accurate
+collect_metrics(resample_log_fit) #81.1% accurate
 
-set.seed(34)
-resample_rf_fit<-fit_resamples(titanic_mod_rf_wflow,vfold_titanic)
-collect_metrics(resample_rf_fit) #82.8% 
-
-set.seed(34)
+set.seed(523)
 resample_svm_fit<-fit_resamples(titanic_mod_svm_wflow,vfold_titanic)
-collect_metrics(resample_svm_fit) #79.2% 
+collect_metrics(resample_svm_fit) #79.4% 
+
 
 #9-model tuning
+#logistic regression model
 titanic_mod_log_tune<-logistic_reg(penalty=tune(),mixture=tune()) %>%
   set_mode("classification") %>%
   set_engine("glm")
@@ -143,23 +126,10 @@ titanic_mod_log_wflow_tune<-workflow() %>%
   add_recipe(titanic_recipe) %>%
   add_model(titanic_mod_log_tune)
 
-resample_log_fit2<-tune_grid(titanic_mod_log_wflow_tune,resamples=vfold_titanic,grid=5) #not tuning
-collect_metrics(resample_log_fit2) #80.2%
+resample_log_fit2<-tune_grid(titanic_mod_log_wflow_tune,resamples=vfold_titanic,grid=30) #not tuning
+collect_metrics(resample_log_fit2) #81.1%
 
-
-titanic_mod_rf_tune<-rand_forest(mtry=tune(),trees=tune(),min_n=tune()) %>%
-  set_mode("classification") %>%
-  set_engine("randomForest")
-
-titanic_mod_rf_wflow_tune<-workflow() %>%
-  add_recipe(titanic_recipe) %>%
-  add_model(titanic_mod_rf_tune)
-
-resample_rf_fit2<-tune_grid(titanic_mod_rf_wflow_tune,resamples=vfold_titanic,grid=20) 
-collect_metrics(resample_rf_fit2) 
-show_best(resample_rf_fit2,metric="accuracy") #83.2%
-
-
+#svm m
 titanic_mod_svm_tune<-svm_poly(cost=tune(),degree=tune(),scale_factor=tune()) %>%
   set_mode("classification") %>%
   set_engine("kernlab")
@@ -168,31 +138,31 @@ titanic_mod_svm_wflow_tune<-workflow() %>%
   add_recipe(titanic_recipe) %>%
   add_model(titanic_mod_svm_tune)
 
-resample_svm_fit2<-tune_grid(titanic_mod_svm_wflow_tune,resamples=vfold_titanic,grid=20) 
-collect_metrics(resample_svm_fit2) 
-show_best(resample_svm_fit2,metric="accuracy") #80.5%
-
+set.seed(95)
+resample_svm_fit2<-tune_grid(titanic_mod_svm_wflow_tune,resamples=vfold_titanic,grid=30) 
+collect_metrics(resample_svm_fit2)
+show_best(resample_svm_fit2,metric="accuracy") #78.6%; cost=23, degree=2.49, scale_factor=.000215
+#chose logistic regression model due to higher accuracy on cross-validation dataset
 
 #10-select best model
-tuned_rf_values<-select_best(resample_rf_fit2,"accuracy")
-tuned_rf_values
+tuned_log_values<-select_best(resample_log_fit2,"accuracy")
 
 
-#11-finalize workflow using tuned values
-tuned_rf_wflow<-titanic_mod_rf_wflow_tune %>%
-  finalize_workflow(tuned_rf_values)
-tuned_rf_wflow
+#11-finalize workflow and model using tuned values
+tuned_log_wflow<-titanic_mod_log_wflow_tune %>%
+  finalize_workflow(tuned_log_values)
+tuned_log_wflow
+fitted_tuned_log_mod<-fit(tuned_log_wflow,f_titanic) %>% pull_workflow_fit()
 
 
-#12-model characteristics
-fitted_tuned_rf_mod<-fit(tuned_rf_wflow,f_titanic) %>% pull_workflow_fit()
-tuned_rf_var_imp<-as.data.frame(fitted_tuned_rf_mod$fit$importance) %>%
-  rownames_to_column(var="variable") %>%
-  arrange(desc(MeanDecreaseGini))
-tuned_rf_var_imp
-#greater decrease in Gini, greater importance
-
-
+#12-model diagnostics
+log_mod_coef<-enframe(fitted_tuned_log_mod$fit$coefficients)
+log_mod_coef %>% 
+  rename(coef="value") %>%
+  arrange(desc(coef)) %>%
+  print(n=30)
+vi(fitted_tuned_log_mod)
+vip(fitted_tuned_log_mod)
 
 #VI. Assess model performance on test data
 #*****************************************
@@ -294,14 +264,12 @@ ct_titanic<-ct_titanic %>%
     as.numeric(ticket)>1000000~"mil",
     str_detect(ticket,"^A")~"A",
     str_detect(ticket,"^C")~"C",
-    str_detect(ticket,"^F")~"F",
     str_detect(ticket,"^P")~"P",
     str_detect(ticket,"^SC")~"SC",
-    str_detect(ticket,"^SO(C|P)")~"SO",
     str_detect(ticket,"^SOT")~"SOT",
     str_detect(ticket,"^S(TO)")~"STO",
-    str_detect(ticket,"^W")~"W",
-    str_detect(ticket,"^L|^SP|^SW")~"other"
+    str_detect(ticket,"^SO(C|P)")~"other",
+    str_detect(ticket,"^W|^F|^L|^SP|^SW")~"other"
   )) 
 unique(ct_titanic$ticket_cat)
 sum(is.na(ct_titanic$ticket_cat)) #0; no NAs
@@ -314,64 +282,54 @@ levels(ct_titanic$ticket_cat)<-c("under_10k",
                                  "mil",
                                  "A",
                                  "C",
-                                 "F",
                                  "P",
                                  "SC",
-                                 "SO",
                                  "SOT",
                                  "STO",
-                                 "W",
                                  "other")
 levels(ct_titanic$ticket_cat)
 
 
-#special titles: extract from name variable
-#teasing out names--higher status (master, dr, )
-#variable creation (for special titles): 1=yes; 0=no
-ct_titanic<-ct_titanic %>%
-  mutate(spec_title=if_else(
-    str_detect(name,"Mr\\.|Col\\.|Master\\.|Dr\\.|Rev\\.|Major\\.
-               |Capt\\.|Sir\\.|Lady\\.|Jonkheer\\.|Countess\\.|Dona\\."),
-    1,0))
-ct_titanic$spec_title<-as.factor(ct_titanic$spec_title)
-
-tabyl(ct_titanic, spec_title) #table of survival and title data: lower survival associated with st
-sum(is.na(ct_titanic$spec_title)) #0; no NAs
-
-
 #marital status: extract fromm name variable 
-#variable creation (for female marital status): M=male; Fm=married female; Funk: female unk mar status; Fum: 
-#unmarried female
-#combined with sex variable by adding levels because m status did not divide males
+#variable creation (for marital status): unk_na=male & unk f; Fm=married female; Fum: unmarried female
 ct_titanic<-ct_titanic %>%
-  mutate(sex_marital_status=case_when(
-    sex=="male"~"M",
+  mutate(marital_status=case_when(
+    sex=="male"~"unk_na",
     str_detect(name,"Mrs\\.|Mme\\.|Lady\\.(.*)Mrs")~"Fm",
-    sex=="female" & str_detect(name,"Dr\\.")~"Funk",
-    str_detect(name,"Countess\\.|Ms.|Dona\\.")~"Funk",
+    sex=="female" & str_detect(name,"Dr\\.")~"unk_na",
+    str_detect(name,"Countess\\.|Ms.|Dona\\.")~"unk_na",
     str_detect(name,"Miss\\.|Mlle\\.")~"Fum"
   ))
 
-unique(ct_titanic$sex_marital_status) #4 categories
-sum(is.na(ct_titanic$sex_marital_status)) #0; no NAs
-ct_titanic$sex_marital_status<-as.factor(ct_titanic$sex_marital_status) #makes it a factor
-levels(ct_titanic$sex_marital_status) #same 4 categories
-tabyl(ct_titanic$sex_marital_status)
+unique(ct_titanic$marital_status) #3 categories
+sum(is.na(ct_titanic$marital_status)) #0; no NAs
+ct_titanic$marital_status<-as.factor(ct_titanic$marital_status) #makes it a factor
+levels(ct_titanic$marital_status) #same 3 categories
+tabyl(ct_titanic$marital_status)
 
-#remove unnecessary columns and convert to f_titanic--WILL NEED TO CHANGE LATER
+
+#family size: combine parch and sib_sp
+ct_titanic<-ct_titanic %>% mutate(fam_size=parch+sib_sp)
+ct_titanic$fam_size<-as.factor(ct_titanic$fam_size)
+ct_titanic$fam_size<-fct_collapse(ct_titanic$fam_size,solo="0",small=c("1","2","3"),
+                                 large=c("4","5","6","7","8","9","10","11","12","13","14","15","16","17",
+                                         "18","19","20"))
+
+
+#remove unnecessary columns and convert to ft_titanic
 ct_titanic
-ft_titanic<-ct_titanic[,-c(3,9:11)] #remove sex, name, ticket, and cabin
+ft_titanic<-ct_titanic[,-c(5:6,9:11)] #removes sib_sp, parch, name, ticket, and cabin
 ft_titanic
 
 
 #Predict survival of test dataset
-pred_titanic<-predict(fitted_tuned_rf_mod,new_data=ft_titanic)
+pred_titanic<-predict(fitted_tuned_log_mod,new_data=ft_titanic)
 pred_titanic
 dim(pred_titanic)
 
 kpost_titanic_submit<-bind_cols(ft_titanic$passenger_id,pred_titanic[,1])
 kpost_titanic_submit<-rename(kpost_titanic_submit,PassengerID="...1",Survived=".pred_class")
-kpost_titanic_submit #0.77033
+kpost_titanic_submit #0.76794
 
 
 #Export predictions to .csv

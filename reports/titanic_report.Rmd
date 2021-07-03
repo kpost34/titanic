@@ -1,0 +1,936 @@
+---
+title: "Titanic Machine Learning Project"
+author: "Keith Post"
+date: "7/3/2021"
+output: 
+  html_document:
+    keep_md: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning=FALSE, message=FALSE)
+```
+
+## **Summary**
+The goal of this data project was to predict survival of passengers on the Titanic by building an algorithm using raw training data of 891 observations that consisted of a dependent variable, an id variable, and 10 features. The specifics of each variable are listed below: 
+
++ PassengerId: identifies passengers
++ Survived: 0 = non-survivor, 1 = survivor
++ Pclass: ticket class; 1 = lower, 2 = middle, 3 = upper
++ Name: name of passenger
++ Sex: male or female
++ Age: age of passenger
++ SibSp: number of siblings and spouse of passenger aboard the Titanic
++ Parch: number of parents and children of passenger aboard the Titanic
++ Ticket: ticket number of passenger
++ Fare: cost of passenger's ticket
++ Cabin: cabin of passenger
++ Embarked: location that passenger boarded the Titanic; S = Southampton, Q = Queenstown, C = Cherbourg
+
+The data were cleaned, wrangled, and tidied, and explored through visualization. Additional features were engineered from the raw data. The final, tidy dataset was split for cross-validaiton. Two models--a logistic regression model and a support-vector machine--were fit to the data, assessed on the cross-validation samples, and the hyperparameters of the support-vector machine were tuned. The logistic regression model had higher accuracy on the cross-validation set and thus was assessed with the test dataset. It was 76.8% accurate in predicting survival of passengers from these data. 
+\
+\
+
+## **Preprocessing Data**
+### Load packages and data
+The relevant packages for preprocessing data were loaded. The csv file for the training dataset was read into R using read_csv() from the readr package.
+```{r preprocess load packages and read data}
+#load packages
+library(here)
+library(readr)
+library(visdat)
+library(dplyr)
+library(skimr)
+library(janitor)
+library(forcats)
+library(recipes)
+library(ggplot2)
+library(stringr)
+
+#import data
+titanic<-read_csv(here("data","raw_data","train.csv"),
+                  col_types="iffcfniicncf")
+```
+The col_types argument matches the data types in the csv file (e.g., i=integer, f=factor, c=character, n=number).
+\
+\
+
+### Preliminary data check
+The titanic tibble was checked for the correct numbers of rows and columns and appropriate column classes as well as for any irregularities.
+```{r preprocess prelim data check}
+#preliminary data checking
+nrow(titanic); ncol(titanic) #check # of rows/cols
+glimpse(titanic) #check classes of variables
+head(titanic,n=10); tail(titanic,n=10) #check top/bottom of tibble
+```
+The tibble is 891 (rows; observations) x 12 (columns; variables), which is correct. The column classes are accurate. The data previews show that there are missing data, particularly in the Cabin column.
+\
+\
+
+### Data cleaning
+The names and order of the columns were changed, and the levels of the pclass factor were re-ordered.
+```{r preprocess clean data}
+titanic<-clean_names(titanic) #clean names
+titanic<-relocate(titanic,survived,before=passenger_id) #rearranges cols
+levels(titanic$pclass) #not in numerical order
+titanic$pclass<-fct_relevel(titanic$pclass,c("1","2","3"))
+levels(titanic$pclass)
+```
+Now the pclass levels are in numerical order.
+\
+\
+
+### Data imputation
+Missing data were assessed visually. 
+
+```{r preprocess missing data,echo=FALSE}
+#assess missing data
+vis_miss(titanic)
+#lots of cabin data missing, about 20% age data missing, and 2 emabrked data missing
+```
+
+Three columns had missing data: cabin (~77% missing), age (~20%), and embarked (2 observations). Given that cabin location intuitively may be related to passenger survival of the Titanic disaster, the variable was kept, and the NAs were recoded as "unknown_other." Age and embarked missing data were imputed using a k-nearest neighbor algorithm via the functions recipe, prep, and bake from the recipes package. 
+```{r preprocess data imputation}
+#impute data
+titanic$cabin[is.na(titanic$cabin)]<-"unknown_other" #replace NAs with unknown_other
+imputed<-recipe(survived~pclass + sex + age + sib_sp + parch + fare + embarked,data=titanic) %>%
+  step_knnimpute(age,embarked,fare,neighbors=10) #via k-nearest neighbors
+saveRDS(imputed,here("data","tidy_data","imputed_data_recipe"))
+i_titanic<-prep(imputed) %>% bake(new_data=titanic)
+sum(is.na(i_titanic)) #no missing data
+```
+Now, there are no missing data in cabin, age, and embarked.
+\
+
+The i_titanic columns were combined with survived, passenger_id, and the three character variables: name, ticket, and cabin.
+```{r preprocess combine i_titanic with titanic cols}
+c_titanic<-bind_cols(titanic[,c(1,2)],i_titanic[,1:7],titanic[,c(4,9,11)])
+```
+\
+\
+
+### Data check
+More thorough data checking was performed following imputation to see if values for select columns made sense and if they were corroborated by external sources.
+```{r preprocess second data check}
+#check n's (using prior knowledge)
+range(c_titanic$age,na.rm=T) #0.42-80
+range(c_titanic$fare,na.rm=T) #0-512
+range(c_titanic$sib_sp) #0-8
+range(c_titanic$parch) #0-6
+#all seem reasonable
+
+#validate with external data
+#from wiki: 24.6% 1st class; 21.5% 2nd class; and 53.8% 3rd class
+tabyl(c_titanic,pclass) #24.2%, 20.7%, and 55.1% (seem close)
+
+#from wiki: 66% male and 34% female
+tabyl(c_titanic,sex) #64.7% m and 35.2% f (again, close)
+```
+The values for age, fare, sib_sp, and parch seemed reasonable (e.g., no negative ages). The distribution of pclasses and sexes were similar to the numbers reported on wikipedia.
+\
+\
+
+### Feature engineering
+Four features were extracted from the training data to help develop a predictive model. 
+\
+\
+
+#### Cabin
+First, cabin_type was engineered from cabin due to its logical predictive ability as well as the diversity of cabins aboard the Titanic.
+```{r preprocess cabin type assessment}
+#cabin: code as factor
+length(unique(c_titanic$cabin)) #148 different cabin types
+unique(c_titanic$cabin)[1:15] #overlapping prefixes (which indicate cabin & possibly survival)
+```
+There were 148 unique cabin values and apparent overlap in the alpha prefix for these values. Thus, cabin values were binned into categories by letter prefix (see Appendix for code), and categories with low numbers (<=12) were added to "unknown_other" along with the NAs in the raw data. The variable cabin_type was converted to a factor. The resultant numbers of cabin_type levels based on survival are shown below.
+```{r hidden cabin engineering, ref.label="preprocess cabin feature engineering",echo=FALSE,results=FALSE}
+```
+
+```{r preprocess cabin type post-engineering, echo=FALSE}
+tabyl(c_titanic,survived,cabin_type) #indicates association between some cabin types and survival
+```
+\
+\
+
+#### Tickets
+The character variable ticket was also engineered as it contained numerous unique values and could potentially be associated with survival.
+```{r preprocess ticket exploration}
+length(unique(c_titanic$ticket)) #681 different types
+sum(str_detect(c_titanic$ticket,"\\D")) #230 have at least one letter
+```
+Specifically, the training data contained 681 unique tickets, and 230 tickets had at least one letter. The rest were completely numeric.
+\
+\
+
+Similar to the cabin variable, the ticket variable was binned by letter prefix for alphanumeric ticket values, and the numeric tickets were categorized by value (e.g., <10000, 10000-100000) as these seemed to be associated the best with survival (see Appendix for code and some output).
+```{r hidden cabin engineering, ref.label=c("preprocess ticket feature engineering I", "preprocess ticket feature engineering II", "preprocess ticket feature engineering III"),echo=FALSE,results=FALSE}
+```
+Following feature engineering, ticket was renamed ticket_cat, reclassified as a factor, and had 13 levels. Their relationships with survival are illustrated below.
+
+```{r preprocess ticket cat post-engineering,echo=FALSE}
+#graph relationship between survival and ticket category
+c_titanic %>%
+  ggplot() +
+  geom_bar(aes(ticket_cat,fill=survived),position="fill") +
+  scale_fill_manual(values=c("darkred","dodgerblue"))
+```
+
+This figure shows variability in survival by ticket_cat.
+\
+\
+
+#### Marital Status
+Marital status of women could be deduced from the name variable. Thus, this was explored as a possible feature. Women were binned into one of three categories--married, unmarried, or unknown marital status--based on title and presence/absence of a maiden name (see Appendix for code). Men's marital status could not be confidently and easily identified by name alone. Therefore, male marital status was considered unknown and combined with women with unknown marital status. As a result, the new feature marital_status had three categories: unk_na (male and unknown female), Fm (married female), and Fum (unmarried female). Below are the relationships between the new feature and survival.
+```{r hidden marital status engineering,ref.label="preprocess marital status feature engineering",echo=FALSE,results=FALSE}
+```
+
+```{r preprocess marital status-survival,echo=FALSE}
+tabyl(c_titanic,survived,marital_status) 
+```
+Married women survived the Titanic disaster at a 4:1 ratio, while unmarried women survived at roughly 2.5:1. 
+\
+\
+
+#### Family Size
+The two variables realted to family size--sib_sp and parch--were explored.
+```{r preprocess fam_size exploration}
+tabyl(c_titanic,sib_sp)
+tabyl(c_titanic,parch)
+c_titanic %>% mutate(fam_size=parch+sib_sp) %>% tabyl(fam_size,survived)
+```
+These tables indicate that most Titanic passengers traveled without family, and that larger families (4+ individuals) were uncommon, potentially confounding results due to paucity of higher sib_sp and parch values. Thus, these two variables were combined into a new feature, fam_size (family size), and converted to a factor with three levels: solo (fam_size=0), small (1-3), and large (4+). The relationship between family size and survival was explored.
+```{r hidden family size engineering,ref.label="preprocess family size feature engineering",echo=FALSE,results=FALSE}
+```
+
+```{r preprocess fam_size-survival,echo=FALSE}
+tabyl(c_titanic,fam_size,survived)
+```
+Survival tends to decrease with increasing family size.
+\
+\
+
+### Feature Selection and Data Saving
+Following data preprocessing, variables of interest were selected for exploratory data analysis and saved as a csv file.
+```{r preprocess feature selection and data save}
+#remove unnecessary columns and convert to f_titanic
+f_titanic<-c_titanic[,-c(6:7,10:12)] #remove sib_sp, parch, name, ticket, and cabin
+
+#explort tibble as a .csv
+write_csv(f_titanic,here("data","tidy_data","tidy_train.csv"))
+```
+\
+\
+
+## **Exploratory Data Analysis**
+### Load packages and data
+Relevant packages for exploratory data analysis were loaded into R. The data were read into R, and columns (variables) were classified appropriately.
+```{r eda packages and data}
+#load packages
+library(readr)
+library(here)
+library(skimr)
+library(dplyr)
+library(ggplot2)
+library(cowplot)
+library(knitr)
+library(kableExtra)
+library(janitor)
+
+#import cleaned and tidied data as a .csv to a tibble
+f_titanic<-read_csv(here("data","tidy_data","tidy_train.csv"),
+         col_types="fiffnnfffff")
+```
+\
+\
+
+### Summary statistics and correlations
+Summary statistics were explored for each variable.
+```{r eda summary stats}
+summary(f_titanic)
+skim(f_titanic) 
+```
+\
+
+These statistics show that there are no missing data. Most passengers were in pclass 3, embarked from Southampton (S), or traveled alone (i.e., fam_size=solo). Passenger age was on averge 30 years old. Approximately 1.6 more people survived the Titanic disaster than did not, according to the training data.
+\
+\
+
+### Predictors only exploration
+Distributional patterns of predictor variables, whether univariate, bivariate, or trivariate, were visualized using ggplot().
+\
+\
+
+#### Univariate
+Categorical variables were visualized with simple bar plots. Two examples--survived and pclass--are shown below.
+```{r eda univariate categorical}
+ggplot(data=f_titanic)+geom_bar(aes(survived)) #~425 Died & ~250 Survived
+ggplot(data=f_titanic)+geom_bar(aes(embarked)) #~2x C than Q and ~4x S than C 
+```
+
+This figure shows that most passengers did not survive and that nearly three quarters of the passengers embarked from Southampton.
+\
+
+Age and fare were the only continuous predictors. Their histograms and density plots were visualized.
+```{r eda univariate continuous}
+p1<-ggplot(data=f_titanic)+geom_histogram(aes(age),binwidth=2) 
+p2<-ggplot(data=f_titanic)+geom_density(aes(age))
+p3<-ggplot(data=f_titanic)+geom_histogram(aes(fare)) 
+p4<-ggplot(data=f_titanic)+geom_density(aes(fare))
+plot_grid(p1,p2,p3,p4,ncol=2)
+```
+
+Age distribution of passengers appears to be right-skewed normal with a valley around 10 years-old and greater than expected travelers less than 1 year old. Fares appear to resemble a log-normal or gamma distribution, with nearly all tickets costing less than 275 (units unknown/unspecified). However, the histogram and density plot indicate at least one ticket with a high fare.
+\
+\
+
+#### Bivariate and higher
+Relationships between two variables, whether categorical-categorical, categorical-continuous, or continuous-continuous, were explored visually. In one example, age of passengers tended to be higher for individuals in pclass 1 compared to the two other classes.
+```{r eda bivariate pclass-age}
+ggplot(data=f_titanic) +
+  geom_boxplot(aes(pclass,age))
+```
+
+Taken one step further, fares tended to be higher for lower pclasses at each age.
+```{r eda trivariate age-fare-pclass}
+ggplot(data=f_titanic)+geom_point(aes(age,fare,color=pclass)) 
+```
+\
+\
+
+### Predictors and survival exploration
+This project is related to a prediction problem; thus, understanding relationships between predictor variables and the dependent variable were of great interest. Survival and its relationship with age and fare were explored separately.
+```{r eda survival-age and survival-fare}
+s1<-ggplot(data=f_titanic,aes(age,..density..)) + 
+  geom_freqpoly(aes(color=survived)) +
+  theme(legend.position="bottom") #similar pattern in age distrubtion by survival
+s2<-ggplot(f_titanic,aes(survived,age)) +
+  stat_summary(geom="bar",fill="steelblue") +
+  stat_summary(geom="errorbar")
+s3<-ggplot(data=f_titanic,aes(fare,..density..)) + 
+  geom_freqpoly(aes(color=survived)) +
+  theme(legend.position="bottom") #similar to age
+s4<-ggplot(f_titanic,aes(survived,fare)) +
+  stat_summary(geom="bar",fill="steelblue") +
+  stat_summary(geom="errorbar")
+plot_grid(s1,s2,s3,s4,ncol=2)
+```
+
+The distribution of ages had similar patterns between survival categories. Younger passengers (i.e., babies, toddlers, and children) tended to have more survivors than non-survivors. However, this pattern reversed for young-middle adults, which resulted in a greater average age of non-survivors than survivors. The relationship between age and survival is unsurprising given the chances of prioritizing saving children over adults. 
+\
+
+The distribution of fares tended to shift to the right for survivors than non-survivors, resulting in a greater average fare for survivors. If the passengers with high fares (i.e., > 500), who all survived, are removed, the comparison between mean fares changes minimally.
+```{r eda survival-fare without high fares}
+f_titanic %>%
+  filter(fare<=500) %>%
+  ggplot(aes(survived,fare)) +
+  stat_summary(geom="bar",fill="steelblue") +
+  stat_summary(geom="errorbar")
+```
+\
+For the entire exploratory data analysis code, please see the Appendix.
+\
+\
+
+## **Modeling**
+### Load packages and data and re-level factors
+The packages needed in building and testing a prediction model were loaded into R. Note that many of these packages are part of tidymodels or are tidymodels-adjacent. The preprocessed training data were read into R, and two factors, pclass and ticket_cat, were releveled using fct_relevel() from forcats. 
+```{r mod load packages and data and re-level}
+#load packages
+library(readr)
+library(here)
+library(rsample)
+library(dplyr)
+library(recipes)
+library(parsnip)
+library(kernlab)
+library(workflows)
+library(yardstick)
+library(tune)
+library(janitor)
+library(forcats)
+library(visdat)
+library(stringr)
+library(skimr)
+library(vip)
+
+#import cleaned and tidied data as a .csv to a tibble
+f_titanic<-read_csv(here("data","tidy_data","tidy_train.csv"),
+         col_types="fiffnnfffff")
+
+#re-level factors
+f_titanic$pclass<-fct_relevel(f_titanic$pclass,c("1","2","3"))
+f_titanic$ticket_cat<-fct_relevel(f_titanic$ticket_cat,c("under_10k","10k_up","100k","200k","300k","mil","A","C","P","SC", "SOT","STO","other"))
+```
+\
+\
+
+### Model building
+#### Create cross-validation samples
+The training data were divided into four subsamples for v-fold cross-validation using vfold_cv() from the rsample package.
+```{r mod create cross-val}
+set.seed(27)
+vfold_titanic<-vfold_cv(data=f_titanic,v=4)
+```
+\
+\
+
+#### Create recipe
+The recipe was created by pulling columns from the f_titanic tibble and specifying the role of each column as "id variable," "predictor," or "outcome." The function recipe from the recipes package was used here.
+```{r mod create recipe}
+titanic_recipe<-recipe(f_titanic) %>%
+  update_role(passenger_id,new_role="id variable") %>% 
+  update_role(pclass:fam_size,new_role="predictor") %>% 
+  update_role(survived,new_role="outcome")
+```
+\
+\
+
+#### Specify models
+The model type was specified using the parsnip package. For this write-up, a logistic regression model and a support-vector machine were assessed. These models were driven by logistic_reg() and svm_poly(), respectively. A logistic regression model was selected as a candidate due to its design for binary classification. A support-vector machne was chosen as it has the ability to differentiate data points in n-dimensional space using non-linear kernel functions.
+```{r mod specify model}
+#logistic regression
+titanic_mod_log<-logistic_reg() %>%
+  set_mode("classification") %>%
+  set_engine("glm") 
+
+#support-vector machine
+titanic_mod_svm<-svm_poly() %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+```
+\
+\
+
+#### Make a workflow
+A workflow consisting of the recipe and model was created for each model type using workflow() from the workflows package.
+```{r mod workflow}
+#logistic regression
+titanic_mod_log_wflow<-workflow() %>%
+  add_recipe(titanic_recipe) %>%
+  add_model(titanic_mod_log)
+
+#svm 
+titanic_mod_svm_wflow<-workflow() %>%
+  add_recipe(titanic_recipe) %>%
+  add_model(titanic_mod_svm)
+```
+\
+\
+
+#### Fit models
+The models were fit to the training data using fit() from the parnsip package.
+```{r mod fit}
+titanic_mod_log_wflow_fit<-parsnip::fit(titanic_mod_log_wflow,data=f_titanic)
+
+titanic_mod_svm_wflow_fit<-parsnip::fit(titanic_mod_svm_wflow,data=f_titanic) 
+```
+\
+\
+
+#### Assess model accuracies
+The fit of the models to the training data were assessed for accuracy. Survival of each passenger was predicted using these models and compared with the actual training data using the function accuracy() from the yardstick package.
+```{r mod train model accuracy}
+#get predictions
+pred_titanic_log<-predict(titanic_mod_log_wflow_fit,new_data=f_titanic)
+pred_titanic_svm<-predict(titanic_mod_svm_wflow_fit,new_data=f_titanic) 
+
+#assess accuracy
+accuracy(f_titanic,
+         truth=survived,estimate=pred_titanic_log$.pred_class) 
+accuracy(f_titanic,
+         truth=survived,estimate=pred_titanic_svm$.pred_class)
+```
+These results indicate that predictive accuracy was 82.8% for the logistic regression model and 81% for the support-vector machine. 
+\
+\
+
+#### Fit models to cross-validation folds
+The two models were fit to cross-validation folds using fit_resamples() from the tune package. This will help determine the degree of overfitting and provide the opportunity to tune hyperparameters.
+```{r mod fit cross-validation folds}
+set.seed(523)
+resample_log_fit<-fit_resamples(titanic_mod_log_wflow,vfold_titanic)
+collect_metrics(resample_log_fit) 
+
+set.seed(523)
+resample_svm_fit<-fit_resamples(titanic_mod_svm_wflow,vfold_titanic)
+collect_metrics(resample_svm_fit) 
+```
+The accuracy of both models dropped using cross-validation. The logistic regression model was more accurate using the cross-validation data (i.e., 81.1% vs. 79.4%). 
+\
+\
+
+#### Tune models
+The hyperparameters of the models were tuned using tune_grid() from the tune package.
+```{r mod tuning}
+#logistic regression model
+titanic_mod_log_tune<-logistic_reg(penalty=tune(),mixture=tune()) %>%
+  set_mode("classification") %>%
+  set_engine("glm")
+
+titanic_mod_log_wflow_tune<-workflow() %>%
+  add_recipe(titanic_recipe) %>%
+  add_model(titanic_mod_log_tune)
+
+resample_log_fit2<-tune_grid(titanic_mod_log_wflow_tune,resamples=vfold_titanic,grid=30) #not tuning
+collect_metrics(resample_log_fit2) #81.1%
+
+#svm 
+titanic_mod_svm_tune<-svm_poly(cost=tune(),degree=tune(),scale_factor=tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+titanic_mod_svm_wflow_tune<-workflow() %>%
+  add_recipe(titanic_recipe) %>%
+  add_model(titanic_mod_svm_tune)
+
+set.seed(95)
+resample_svm_fit2<-tune_grid(titanic_mod_svm_wflow_tune,resamples=vfold_titanic,grid=30) 
+collect_metrics(resample_svm_fit2)
+show_best(resample_svm_fit2,metric="accuracy") 
+```
+The results show that R was unable to tune the logistic regression model (driven by "glm"). Conversely, the cost, polynomial degree, and scale factor of the support-vector machine was tuned by R. The best support-vector machine had slighly lower accuracy after tuning (i.e., 78.6% vs. 79.4%). 
+\
+\
+
+#### Select best model and finalize workflow
+The logistic regression model had better accuracy following tuning. Thus it was selected for testing and its workflow and model were finalized.
+```{r mod select best and finalize}
+tuned_log_values<-select_best(resample_log_fit2,"accuracy")
+tuned_log_wflow<-titanic_mod_log_wflow_tune %>%
+  finalize_workflow(tuned_log_values)
+tuned_log_wflow<-titanic_mod_log_wflow_tune %>%
+  finalize_workflow(tuned_log_values)
+fitted_tuned_log_mod<-fit(tuned_log_wflow,f_titanic) %>% pull_workflow_fit()
+```
+\
+\
+
+#### Assess model characteristics
+To further understand the best model, variable coefficients and importance were explored. The latter was accomplished using vi() and vip() from the vip package. 
+```{r mod coefficients and variable importance}
+log_mod_coef<-enframe(fitted_tuned_log_mod$fit$coefficients)
+log_mod_coef %>% 
+  rename(coef="value") %>%
+  arrange(desc(coef)) %>%
+  print(n=30)
+vi(fitted_tuned_log_mod)
+vip(fitted_tuned_log_mod)
+```
+
+Interpretation of variable coefficients depends on the predictor variable type. If it is continuous, then as that predictor increases, the dependent variable (i.e., survival) will likely increase/decrease depending on the sign and magnitude of the coefficient. For categorical predictors, the sign and importance indicate the likely direction of change in the dependent variable as the predictor changes from the reference level to the stated level. For example, sexfemale has a coefficient of +15.1; thus, a female passenger is more likely to survive than a male (reference level) passenger. The graph of variable importance shows that age was the most important predictor, followed by large family size, and cabin type E.
+\
+\
+
+### Test model
+#### Preliminary steps
+The logistic regression model was assessed on test data, which were exogenous to model fitting and cross-validaiton, to measure its out-of-sample accuracy. These data were preprocessed using the same methods for the training data. The tasks include cleaning column names, imputing data, and feature engineering. Code for these steps can be found in the Appendix.
+```{r hidden preprocessing test data, ref.label="preprocess test data",echo=FALSE,results=FALSE}
+```
+\
+\
+
+#### Predict survival on test data
+Once the test data were converted into a clean and tidy form, the logistic regression model was run on these data to predict survival and assess accuracy. The predict() function was used to generate predicted survival values. These data were combined with the passenger ids, saved as a csv file, and submitted to Kaggle to assess accuracy.
+```{r mod test predict}
+pred_titanic<-predict(fitted_tuned_log_mod,new_data=ft_titanic)
+kpost_titanic_submit<-bind_cols(ft_titanic$passenger_id,pred_titanic[,1])
+kpost_titanic_submit<-rename(kpost_titanic_submit,PassengerID="...1",Survived=".pred_class")
+write_csv(kpost_titanic_submit,here("data","predictions","kpost_titanic_submission.csv"))
+```
+This model was 76.794% accurate in predicting survival of passengers from the test data. 
+\
+\
+\
+
+## Appendix
+### Feature engineering code
+#### Cabin
+```{r preprocess cabin feature engineering,evaluate=FALSE}
+c_titanic$cabin[str_which(c_titanic$cabin,"^T|^G")]<-"unknown_other" 
+#replaces T & G cabins with u_o (few numbers)
+
+#bin cabin names by first letter into types
+c_titanic<-c_titanic %>%
+  mutate(cabin_type=case_when(
+    str_detect(cabin,"^A")~"A",
+    str_detect(cabin,"^B")~"B",
+    str_detect(cabin,"^C")~"C",
+    str_detect(cabin,"^D")~"D",
+    str_detect(cabin,"^E")~"E",
+    str_detect(cabin,"^F")~"F",
+    str_detect(cabin,"unknown_other")~"UO"
+  )) 
+head(c_titanic[,12:13],10) #check, and it works
+tabyl(c_titanic$cabin_type) #cabin_type level with lowest obs is F with 13
+sum(is.na(c_titanic$cabin_type)) #0; no NAs
+c_titanic$cabin_type<-as.factor(c_titanic$cabin_type) #makes it a factor
+levels(c_titanic$cabin_type) #7 levels
+```
+\
+\
+
+#### Ticket
+```{r preprocess ticket feature engineering I,evaluate=FALSE}
+c_titanic$ticket<-
+  str_replace_all(c_titanic$ticket,"[[:punct:]]","") #removes punctuation
+
+#preview some of the ticket prefixes
+filter(c_titanic,str_detect(ticket,"^STO"))
+filter(c_titanic,str_detect(ticket,"^SOT"))
+filter(c_titanic,str_detect(ticket,"^S")) %>% print(n=10)
+filter(c_titanic,str_detect(ticket,"^SO(C|P)")) %>% print(n=10)
+```
+
+```{r preprocess ticket feature engineering II}
+#look more closely at ticket number (based on number ranges) and survival
+c_titanic %>% filter(as.numeric(ticket)<10000) %>% tabyl(survived) #less than 10k; 36% survival
+c_titanic %>% filter(between(as.numeric(ticket),10000,100000)) %>% tabyl(survived) #b/t 10k & 100k; 62% survival
+c_titanic %>% filter(between(as.numeric(ticket),100000,200000)) %>% tabyl(survived) #b/t 100 & 200k; 51% survival
+c_titanic %>% filter(between(as.numeric(ticket),200000,300000)) %>% tabyl(survived) #b/t 200 & 300k; 48% survival
+c_titanic %>% filter(between(as.numeric(ticket),100000,1000000)) %>% tabyl(survived) #b/t 100k & 1 mil.; 32% survival
+#note: bin all 5-digit ticket numbers then you lose effect of 300k range
+c_titanic %>% filter(between(as.numeric(ticket),300000,1000000)) %>% tabyl(survived) #b/t 300k & 1 mil.; 21% survivalk
+c_titanic %>% filter(as.numeric(ticket)>1000000) %>% tabyl(survived) #greater than 1 mil.; 25% survival
+#appears to be association between ticket number and survival
+```
+
+```{r preprocess ticket feature engineering III, evaluate=FALSE}
+#bins ticket prefixes into categories
+c_titanic<-c_titanic %>% 
+  mutate(ticket_cat=case_when(
+    as.numeric(ticket)<10000~"under_10k",
+    between(as.numeric(ticket),10000,100000)~"10k_up",
+    between(as.numeric(ticket),100000,200000)~"100k",
+    between(as.numeric(ticket),200000,300000)~"200k",
+    between(as.numeric(ticket),300000,1000000)~"300k",
+    as.numeric(ticket)>1000000~"mil",
+    str_detect(ticket,"^A")~"A",
+    str_detect(ticket,"^C")~"C",
+    str_detect(ticket,"^P")~"P",
+    str_detect(ticket,"^SC")~"SC",
+    str_detect(ticket,"^SOT")~"SOT",
+    str_detect(ticket,"^S(TO)")~"STO",
+    str_detect(ticket,"^SO(C|P)")~"other",
+    str_detect(ticket,"^W|^F|^L|^SP|^SW")~"other"
+  )) 
+unique(c_titanic$ticket_cat)
+sum(is.na(c_titanic$ticket_cat)) #0; no NAs
+c_titanic$ticket_cat<-as.factor(c_titanic$ticket_cat) #makes it a factor
+levels(c_titanic$ticket_cat)
+c_titanic$ticket_cat<-fct_relevel(c_titanic$ticket_cat,
+                                  "under_10k",
+                                  "10k_up",
+                                  "100k",
+                                  "200k",
+                                  "300k",
+                                  "mil",
+                                  "A",
+                                  "C",
+                                  "P",
+                                  "SC",
+                                  "SOT",
+                                  "STO",
+                                  "other")
+levels(c_titanic$ticket_cat)                           
+tabyl(c_titanic,survived,ticket_cat) #clearly some ticket numbers/prefixes are associated with survival
+```
+\
+\
+
+#### Marital Status
+```{r preprocess marital status feature engineering, evaluate=FALSE}
+#marital status: extract fromm name variable 
+#test of coding 
+length(str_subset(c_titanic$name,"Mrs")) #129
+head(str_subset(c_titanic$name,"Mrs"),n=15) #sample of above
+length(str_subset(c_titanic$name,"Mrs\\.")) #125 married women
+head(str_subset(c_titanic$name,"Mrs\\."),n=15) #sample of above
+str_subset(c_titanic$name,"Mme\\.") #married woman; 1
+str_subset(c_titanic$name,"Lady\\.(.*)Mrs") #married woman; 1
+str_subset(c_titanic$name,"Dr\\.") #1 female doctor; unknown marital status
+str_subset(c_titanic$name,"Countess\\.") #1 countess; unknown marital status
+str_subset(c_titanic$name,"Ms\\.") #unknown marital status; 1
+head(str_subset(c_titanic$name, "Miss\\."),n=15) #unmarried women; 182
+str_subset(c_titanic$name,"Mlle\\.") #unmarried women; 2
+125+1+1+1+1+1+182+2 #314
+filter(c_titanic,sex=="female") #314
+
+#variable creation (for marital status): unk_na=male & unk f; Fm=married female; Fum: unmarried female
+c_titanic<-c_titanic %>%
+  mutate(marital_status=case_when(
+    sex=="male"~"unk_na",
+    str_detect(name,"Mrs\\.|Mme\\.|Lady\\.(.*)Mrs")~"Fm",
+    sex=="female" & str_detect(name,"Dr\\.")~"unk_na",
+    str_detect(name,"Countess\\.|Ms.|Dona\\.")~"unk_na",
+    str_detect(name,"Miss\\.|Mlle\\.")~"Fum"
+  ))
+
+unique(c_titanic$marital_status) #3 categories
+sum(is.na(c_titanic$marital_status)) #0; no NAs
+c_titanic$marital_status<-as.factor(c_titanic$marital_status) #makes it a factor
+levels(c_titanic$marital_status) #same 3 categories
+```
+\
+\
+
+#### Family Size
+```{r preprocess family size feature engineering, evaluate=FALSE}
+#family size: combine parch and sib_sp and bin by size (solo=0, small=1-3, large=4+)
+c_titanic<-c_titanic %>% mutate(fam_size=parch+sib_sp)
+tabyl(c_titanic,fam_size,survived)
+
+c_titanic$fam_size<-as.factor(c_titanic$fam_size)
+c_titanic$fam_size<-fct_collapse(c_titanic$fam_size,solo="0",small=c("1","2","3"),
+                                 large=c("4","5","6","7","8","9","10","11","12","13","14","15","16","17",
+                                         "18","19","20"))
+levels(c_titanic$fam_size) #3 levels
+```
+\
+\
+
+## Exploratory Data Analysis Code
+```{r eda full}
+#Summary stats 
+summary(f_titanic)
+skim(f_titanic) 
+
+
+#Predictors only
+#Univariate
+#categorical
+ggplot(data=f_titanic)+geom_bar(aes(survived)) #~550 Died & ~350 Survived
+ggplot(data=f_titanic)+geom_bar(aes(pclass)) #almost 2.5x class 3 than 1 or 2
+ggplot(data=f_titanic)+geom_bar(aes(embarked)) #~2x C than Q and ~4x S than C 
+ggplot(data=f_titanic)+geom_bar(aes(fam_size)) #~600 0, ~300 small, and ~ 50 large
+#most passengers traveled alone
+
+#continuous
+p1<-ggplot(data=f_titanic)+geom_histogram(aes(age),binwidth=2) #right-skewed normal with a valley ~10 yo and higher than expected <1 yo
+p2<-ggplot(data=f_titanic)+geom_density(aes(age))
+p3<-ggplot(data=f_titanic)+geom_histogram(aes(fare)) #fares generally under $275 except for at least one >$500; resembles Poisson distribution
+p4<-ggplot(data=f_titanic)+geom_density(aes(fare))
+plot_grid(p1,p2,p3,p4,ncol=2)
+#age is close to normal except more newborns/toddlers and fewer teens than expected 
+#perhaps fare could be modeled with a log-normal or gamma distrubition; notice a couple fares > $500
+
+
+#Bivariate
+#categorical-continuous
+ggplot(data=f_titanic) +
+  geom_boxplot(aes(pclass,age))
+ #age by pclass: age tends to decrease as pclass increases
+
+#categorical/integer-continuous or cotinuous-continuous
+ggplot(data=f_titanic)+geom_point(aes(age,fare),method="lm") #fare outliers (>$500) for two people just shy of 40 yo; no obvious relationship here
+f_titanic %>% filter(fare<500) %>% ggplot()+geom_point(aes(age,fare))+geom_smooth(aes(age,fare),method="lm") #here it is without the high fares
+f_titanic %>% filter(fare>500)
+
+ggplot(data=f_titanic)+geom_point(aes(age,fare,color=pclass)) 
+#lower class passengers generally had lower ticket fares at each age
+ggplot(data=f_titanic,aes(fare,..density..))+geom_freqpoly()+facet_wrap(~ fam_size) 
+#similar pattern among all fam_size levels (peaks at very low fare) except that small fam_size indicates a smaller peak and more observations at fares <200
+ggplot(data=f_titanic,aes(fare,..density..))+geom_freqpoly(aes(color=embarked))
+
+
+#Predictors and dependent variable (survived)
+#categorical-continuous
+s1<-ggplot(data=f_titanic,aes(age,..density..)) + 
+  geom_freqpoly(aes(color=survived)) +
+  theme(legend.position="bottom") #similar pattern in age distrubtion by survival
+s2<-ggplot(f_titanic,aes(survived,age)) +
+  stat_summary(geom="bar",fill="steelblue") +
+  stat_summary(geom="errorbar")
+s3<-ggplot(data=f_titanic,aes(fare,..density..)) + 
+  geom_freqpoly(aes(color=survived)) +
+  theme(legend.position="bottom") #similar to age
+s4<-ggplot(f_titanic,aes(survived,fare)) +
+  stat_summary(geom="bar",fill="steelblue") +
+  stat_summary(geom="errorbar")
+plot_grid(s1,s2,s3,s4,ncol=2)
+
+#without high fares
+f_titanic %>%
+  filter(fare<=500) %>%
+  ggplot(aes(survived,fare)) +
+  stat_summary(geom="bar",fill="steelblue") +
+  stat_summary(geom="errorbar")
+
+
+#TABLE
+survived_pclass_table<-
+  f_titanic %>%
+  group_by(survived,pclass) %>%
+  summarize(
+    N=n(),
+    .groups="drop"
+  )
+survived_pclass_table
+kable(survived_pclass_table,format="html") %>%
+  kable_styling("striped","bordered") %>%
+  add_header_above(c(" "=1,"Passenger survival by pclass"=2)) #title spans cols 2 and 3
+```
+\
+\
+
+### Preprocessing Test Data
+```{r preprocess test data, evaluate=FALSE}
+#Read in data
+t_titanic<-read_csv(here("data","raw_data","test.csv"),
+                    col_types="ifcfniicncf")
+t_titanic
+
+
+#Clean data
+#1. Preliminary data checking
+nrow(t_titanic); ncol(t_titanic) #check # of rows/cols
+str(t_titanic) #check classes of variables
+head(t_titanic,n=10); tail(t_titanic,n=10) #check top/bottom of tibble
+
+
+#2. Data cleaning
+t_titanic<-clean_names(t_titanic) #clean names
+#re-level factors to match training set
+t_titanic$pclass<-fct_relevel(t_titanic$pclass,c("1","2","3"))
+t_titanic$embarked<-fct_relevel(t_titanic$embarked,c("S","C","Q"))
+
+
+#3. Data imputation
+#assess missing data
+vis_dat(t_titanic)
+vis_miss(t_titanic)
+#lots of cabin data missing, about 20% age data missing, and 1 fare data point missing
+
+#impute data
+t_titanic$cabin[is.na(t_titanic$cabin)]<-"unknown_other" #replace NAs with unknown_other
+#use same preprocessing from training data
+imputed<-readRDS(here("data","tidy_data","imputed_data_recipe"))
+it_titanic<-prep(imputed) %>% bake(new_data=t_titanic)
+summary(it_titanic) #no missing data
+ct_titanic<-bind_cols(t_titanic[,1],it_titanic[,1:7],t_titanic[,c(3,8,10)])
+
+
+#4. Data checking
+#check n's (using prior knowledge)
+range(ct_titanic$age,na.rm=T) #0.17-76
+range(ct_titanic$fare,na.rm=T) #0-512
+range(ct_titanic$sib_sp) #0-8
+range(ct_titanic$parch) #0-9
+#all seem reasonable
+
+#validate with external data
+#from wiki: 24.6% 1st class; 21.5% 2nd class; and 53.8% 3rd class
+tabyl(ct_titanic,pclass) #25.6%, 22.2%, and 52.1% (seem close)
+
+#from wiki: 66% male and 34% female
+tabyl(ct_titanic,sex) #63.6% m and 36.4% f (again, close)
+
+#data summaries (with imputed data)
+summary(ct_titanic)
+skim(ct_titanic)
+
+
+#5. Feature engineering
+#cabin: code as factor
+head(sort(ct_titanic$cabin),n=15) #sample of sorted cabin values
+length(unique(ct_titanic$cabin)) #77 different cabin types
+ct_titanic$cabin[str_which(ct_titanic$cabin,"^T|^G")]<-"unknown_other" 
+#replaces T & G cabinswith u_o (few numbers)
+
+#bin cabin names by first letter into types
+ct_titanic<-ct_titanic %>%
+  mutate(cabin_type=case_when(
+    str_detect(cabin,"^A")~"A",
+    str_detect(cabin,"^B")~"B",
+    str_detect(cabin,"^C")~"C",
+    str_detect(cabin,"^D")~"D",
+    str_detect(cabin,"^E")~"E",
+    str_detect(cabin,"^F")~"F",
+    str_detect(cabin,"unknown_other")~"UO"
+  )) 
+tail(ct_titanic[,11:12],10) #check, and it works
+sum(is.na(ct_titanic$cabin_type)) #0; no NAs
+ct_titanic$cabin_type<-as.factor(ct_titanic$cabin_type) #makes it a factor
+levels(ct_titanic$cabin_type) #7 levels
+
+
+#tickets: code as factor
+#bin tickets into categories (as a factor)
+head(sort(ct_titanic$ticket),n=20) #sample of sorted tickets by character
+head(sort(as.numeric(ct_titanic$ticket)),n=20) #sample of sorted tickets by number
+
+ct_titanic$ticket<-
+  str_replace_all(ct_titanic$ticket,"[[:punct:]]","") #removes punctuation
+
+#bins ticket prefixes into categories
+ct_titanic<-ct_titanic %>% 
+  mutate(ticket_cat=case_when(
+    as.numeric(ticket)<10000~"under_10k",
+    between(as.numeric(ticket),10000,100000)~"10k_up",
+    between(as.numeric(ticket),100000,200000)~"100k",
+    between(as.numeric(ticket),200000,300000)~"200k",
+    between(as.numeric(ticket),300000,1000000)~"300k",
+    as.numeric(ticket)>1000000~"mil",
+    str_detect(ticket,"^A")~"A",
+    str_detect(ticket,"^C")~"C",
+    str_detect(ticket,"^P")~"P",
+    str_detect(ticket,"^SC")~"SC",
+    str_detect(ticket,"^SOT")~"SOT",
+    str_detect(ticket,"^S(TO)")~"STO",
+    str_detect(ticket,"^SO(C|P)")~"other",
+    str_detect(ticket,"^W|^F|^L|^SP|^SW")~"other"
+  )) 
+unique(ct_titanic$ticket_cat)
+sum(is.na(ct_titanic$ticket_cat)) #0; no NAs
+ct_titanic$ticket_cat<-as.factor(ct_titanic$ticket_cat) #makes it a factor
+levels(ct_titanic$ticket_cat)<-c("under_10k",
+                                 "10k_up",
+                                 "100k",
+                                 "200k",
+                                 "300k",
+                                 "mil",
+                                 "A",
+                                 "C",
+                                 "P",
+                                 "SC",
+                                 "SOT",
+                                 "STO",
+                                 "other")
+levels(ct_titanic$ticket_cat)
+
+
+#marital status: extract fromm name variable 
+#variable creation (for marital status): unk_na=male & unk f; Fm=married female; Fum: unmarried female
+ct_titanic<-ct_titanic %>%
+  mutate(marital_status=case_when(
+    sex=="male"~"unk_na",
+    str_detect(name,"Mrs\\.|Mme\\.|Lady\\.(.*)Mrs")~"Fm",
+    sex=="female" & str_detect(name,"Dr\\.")~"unk_na",
+    str_detect(name,"Countess\\.|Ms.|Dona\\.")~"unk_na",
+    str_detect(name,"Miss\\.|Mlle\\.")~"Fum"
+  ))
+
+unique(ct_titanic$marital_status) #3 categories
+sum(is.na(ct_titanic$marital_status)) #0; no NAs
+ct_titanic$marital_status<-as.factor(ct_titanic$marital_status) #makes it a factor
+levels(ct_titanic$marital_status) #same 3 categories
+tabyl(ct_titanic$marital_status)
+
+
+#family size: combine parch and sib_sp
+ct_titanic<-ct_titanic %>% mutate(fam_size=parch+sib_sp)
+ct_titanic$fam_size<-as.factor(ct_titanic$fam_size)
+ct_titanic$fam_size<-fct_collapse(ct_titanic$fam_size,solo="0",small=c("1","2","3"),
+                                 large=c("4","5","6","7","8","9","10","11","12","13","14","15","16","17",
+                                         "18","19","20"))
+
+
+#remove unnecessary columns and convert to ft_titanic
+ct_titanic
+ft_titanic<-ct_titanic[,-c(5:6,9:11)] #removes sib_sp, parch, name, ticket, and cabin
+ft_titanic
+```
+
+
+
+
+

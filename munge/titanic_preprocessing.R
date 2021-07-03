@@ -23,7 +23,7 @@ titanic
 #***********************************************
 #1. Preliminary data checking
 nrow(titanic); ncol(titanic) #check # of rows/cols
-str(titanic) #check classes of variables
+glimpse(titanic) #check classes of variables
 head(titanic,n=10); tail(titanic,n=10) #check top/bottom of tibble
 
 
@@ -36,7 +36,6 @@ titanic$pclass<-fct_relevel(titanic$pclass,c("1","2","3"))
 
 #3. Data imputation
 #assess missing data
-vis_dat(titanic)
 vis_miss(titanic)
 #lots of cabin data missing, about 20% age data missing, and 2 emabrked data missing
 
@@ -77,7 +76,7 @@ length(unique(c_titanic$cabin)) #148 different cabin types
 unique(c_titanic$cabin)[1:15] #overlapping prefixes (which indicate cabin & possibly
 #survival)
 c_titanic$cabin[str_which(c_titanic$cabin,"^T|^G")]<-"unknown_other" 
-#replaces T & G cabinswith u_o (few numbers)
+#replaces T & G cabins with u_o (few numbers)
 
 #bin cabin names by first letter into types
 c_titanic<-c_titanic %>%
@@ -101,6 +100,8 @@ tabyl(c_titanic,survived,cabin_type) #indicates association between some cabin t
 
 #tickets: code as factor
 #bin tickets into categories (as a factor)
+length(unique(c_titanic$ticket)) #681 different types
+sum(str_detect(c_titanic$ticket,"\\D")) #230 have at least one letter
 sort(c_titanic$ticket) #sort tickets by character
 sort(as.numeric(c_titanic$ticket)) #sort tickets by number
 
@@ -111,7 +112,6 @@ c_titanic$ticket<-
 filter(c_titanic,str_detect(ticket,"^STO"))
 filter(c_titanic,str_detect(ticket,"^SOT"))
 filter(c_titanic,str_detect(ticket,"^S")) %>% print(n=65)
-filter(c_titanic,str_detect(ticket,"^SO(C|P)")) %>% print(n=10)
 
 #look more closely at ticket number (based on number ranges) and survival
 c_titanic %>% filter(as.numeric(ticket)<10000) %>% tabyl(survived) #less than 10k; 36% survival
@@ -135,14 +135,12 @@ c_titanic<-c_titanic %>%
     as.numeric(ticket)>1000000~"mil",
     str_detect(ticket,"^A")~"A",
     str_detect(ticket,"^C")~"C",
-    str_detect(ticket,"^F")~"F",
     str_detect(ticket,"^P")~"P",
     str_detect(ticket,"^SC")~"SC",
-    str_detect(ticket,"^SO(C|P)")~"SO",
     str_detect(ticket,"^SOT")~"SOT",
     str_detect(ticket,"^S(TO)")~"STO",
-    str_detect(ticket,"^W")~"W",
-    str_detect(ticket,"^L|^SP|^SW")~"other"
+    str_detect(ticket,"^SO(C|P)")~"other",
+    str_detect(ticket,"^W|^F|^L|^SP|^SW")~"other"
   )) 
 unique(c_titanic$ticket_cat)
 sum(is.na(c_titanic$ticket_cat)) #0; no NAs
@@ -157,13 +155,10 @@ c_titanic$ticket_cat<-fct_relevel(c_titanic$ticket_cat,
                                   "mil",
                                   "A",
                                   "C",
-                                  "F",
                                   "P",
                                   "SC",
-                                  "SO",
                                   "SOT",
                                   "STO",
-                                  "W",
                                   "other")
 levels(c_titanic$ticket_cat)                           
 tabyl(c_titanic,survived,ticket_cat) #clearly some ticket numbers/prefixes are associated with survival
@@ -173,46 +168,10 @@ c_titanic %>%
   ggplot() +
   geom_bar(aes(ticket_cat,fill=survived),position="fill") +
   scale_fill_manual(values=c("darkred","dodgerblue"))
-#6 categories are highly discriminating
+#indicates variability in survival by ticket_cat
 
 
-#special titles: extract from name variable
-#teasing out names--higher status (master, dr, )
-#exploration: males
-str_subset(c_titanic$name,"Mr\\.") #517
-str_subset(c_titanic$name,"Col\\.") #colonels; 2
-str_subset(c_titanic$name,"Master") #masters; 40
-str_subset(c_titanic$name,"Dr\\.") #doctors; 6 male (7 total)
-str_subset(c_titanic$name,"Rev\\.") #reverends; 6
-str_subset(c_titanic$name,"Major\\.") #majors; 2
-str_subset(c_titanic$name,"Capt\\.") #captain; 1
-str_subset(c_titanic$name,"Sir\\.") #knights?; 1
-517+2+40+6+6+2+1+1+1 #576 (+ 1 without title; Uruchurtu, Don. Manuel E)
-filter(c_titanic,sex=="male") #577
-#females
-str_subset(c_titanic$name,"Lady\\.") #1
-str_subset(c_titanic$name,"Jonkheer\\.") #1
-str_subset(c_titanic$name,"Countess\\.") #1
-str_subset(c_titanic$name,"Dona\\.") #0
-
-#variable creation (for special titles): 1=yes; 0=no
-c_titanic<-c_titanic %>%
-  mutate(spec_title=if_else(
-    str_detect(name,"Mr\\.|Col\\.|Master\\.|Dr\\.|Rev\\.|Major\\.
-               |Capt\\.|Sir\\.|Lady\\.|Jonkheer\\.|Countess\\.|Dona\\."),
-    1,0))
-c_titanic$spec_title<-as.factor(c_titanic$spec_title)
-
-tabyl(c_titanic,survived,spec_title) #table of survival and title data: lower survival associated with st
-
-#graph of title split on survival
-c_titanic %>%
-  ggplot() +
-  geom_bar(aes(spec_title,fill=survived),position="fill") +
-  scale_fill_manual(values=c("purple4","darkgreen"))
-
-
-#marital status: extract fromm name variable 
+#marital status: extract from name variable 
 #test of coding 
 str_subset(c_titanic$name,"Mrs") #129
 str_subset(c_titanic$name,"Mrs\\.") #married women; 125
@@ -226,31 +185,49 @@ str_subset(c_titanic$name,"Mlle\\.") #unmarried women; 2
 125+1+1+1+1+1+182+2 #314
 filter(c_titanic,sex=="female") #314
 
-#variable creation (for female marital status): M=male; Fm=married female; Funk: female unk mar status; Fum: 
-#unmarried female
-#combined with sex variable by adding levels because m status did not divide males
+#variable creation (for marital status): unk_na=male & unk f; Fm=married female; Fum: unmarried female
 c_titanic<-c_titanic %>%
-  mutate(sex_marital_status=case_when(
-    sex=="male"~"M",
+  mutate(marital_status=case_when(
+    sex=="male"~"unk_na",
     str_detect(name,"Mrs\\.|Mme\\.|Lady\\.(.*)Mrs")~"Fm",
-    sex=="female" & str_detect(name,"Dr\\.")~"Funk",
-    str_detect(name,"Countess\\.|Ms.|Dona\\.")~"Funk",
+    sex=="female" & str_detect(name,"Dr\\.")~"unk_na",
+    str_detect(name,"Countess\\.|Ms.|Dona\\.")~"unk_na",
     str_detect(name,"Miss\\.|Mlle\\.")~"Fum"
   ))
 
-unique(c_titanic$sex_marital_status) #4 categories
-sum(is.na(c_titanic$sex_marital_status)) #0; no NAs
-c_titanic$sex_marital_status<-as.factor(c_titanic$sex_marital_status) #makes it a factor
-levels(c_titanic$sex_marital_status) #same 4 categories
+unique(c_titanic$marital_status) #3 categories
+sum(is.na(c_titanic$marital_status)) #0; no NAs
+c_titanic$marital_status<-as.factor(c_titanic$marital_status) #makes it a factor
+levels(c_titanic$marital_status) #same 3 categories
 
-#comparison between two variables
-tabyl(c_titanic,survived,sex_marital_status) 
-tabyl(c_titanic,survived,sex) 
-#disparity in survival between unmarried and married women (perhaps confounded by age)
+#peak at marital status and survival
+tabyl(c_titanic,survived,marital_status) 
 
-#remove unnecessary columns and convert to f_titanic--WILL NEED TO CHANGE LATER
+
+#variable creation (for family size): combine parch and sib_sp and bin by size
+#solo=0, small=1-3, large=4+
+#exploration
+tabyl(c_titanic,sib_sp)
+tabyl(c_titanic,parch)
+c_titanic %>% mutate(fam_size=parch+sib_sp) %>% tabyl(fam_size)
+
+#engineering
+c_titanic<-c_titanic %>% mutate(fam_size=parch+sib_sp)
+tabyl(c_titanic,fam_size,survived)
+
+c_titanic$fam_size<-as.factor(c_titanic$fam_size)
+c_titanic$fam_size<-fct_collapse(c_titanic$fam_size,solo="0",small=c("1","2","3"),
+                                 large=c("4","5","6","7","8","9","10","11","12","13","14","15","16","17",
+                                         "18","19","20"))
+levels(c_titanic$fam_size) #3 levels
+
+#fam_size and survival
+tabyl(c_titanic,fam_size,survived)
+
+
+#remove unnecessary columns and convert to f_titanic
 c_titanic
-f_titanic<-c_titanic[,-c(4,10:12)] #remove sex, name, ticket, and cabin
+f_titanic<-c_titanic[,-c(6:7,10:12)] #remove sib_sp, parch, name, ticket, and cabin
 f_titanic
 
 
