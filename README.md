@@ -15,10 +15,10 @@ The goal of this project was to build a machine learning model from a sample of 
   + janitor 2.0.1
   + tidymodels 0.1.2
   + cowplot 1.0.0
-  + PeformanceAnalytics 2.0.4
-  + GGally 2.1.0
   + kableExtra 1.3.1
   + kernlab 0.9-29
+  + knitr 1.28
+  + vip 0.3.2
 
 
 ## Future updates
@@ -34,7 +34,7 @@ The goal of this project was to build a machine learning model from a sample of 
 - [x] Cross-validate
 - [x] Tune model
 - [x] Test model
-- [] Write up results
+- [x] Write up results
 
 
 #### **Project Creator: Keith Post**
