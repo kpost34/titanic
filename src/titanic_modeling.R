@@ -183,7 +183,7 @@ head(t_titanic,n=10); tail(t_titanic,n=10) #check top/bottom of tibble
 t_titanic<-clean_names(t_titanic) #clean names
 #re-level factors to match training set
 t_titanic$pclass<-fct_relevel(t_titanic$pclass,c("1","2","3"))
-t_titanic$embarked<-fct_relevel(t_titanic$embarked,c("S","C","Q"))
+t_titanic$embarked<-fct_relevel(t_titanic$embarked,c("C","Q","S"))
 
 
 #3. Data imputation
@@ -216,7 +216,7 @@ tabyl(ct_titanic,pclass) #25.6%, 22.2%, and 52.1% (seem close)
 #from wiki: 66% male and 34% female
 tabyl(ct_titanic,sex) #63.6% m and 36.4% f (again, close)
 
-#data summaries (with imputed data)
+#data summaries (with imputed data) 
 summary(ct_titanic)
 skim(ct_titanic)
 

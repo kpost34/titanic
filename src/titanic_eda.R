@@ -38,7 +38,7 @@ p3<-ggplot(data=f_titanic)+geom_histogram(aes(fare)) #fares generally under $275
 p4<-ggplot(data=f_titanic)+geom_density(aes(fare))
 plot_grid(p1,p2,p3,p4,ncol=2)
 #age is close to normal except more newborns/toddlers and fewer teens than expected 
-#perhaps fare could be modeled with a log-normal or gamma distrubition; notice a couple fares > $500
+#perhaps fare could be modeled with a log-normal or gamma distribution; notice a couple fares > $500
 
 
 #Bivariate
@@ -47,8 +47,8 @@ ggplot(data=f_titanic) +
   geom_boxplot(aes(pclass,age))
  #age by pclass: age tends to decrease as pclass increases
 
-#categorical/integer-continuous or cotinuous-continuous
-ggplot(data=f_titanic)+geom_point(aes(age,fare),method="lm") #fare outliers (>$500) for two people just shy of 40 yo; no obvious relationship here
+#categorical/integer-continuous or continuous-continuous
+ggplot(data=f_titanic)+geom_point(aes(age,fare)) #fare outliers (>$500) for two people just shy of 40 yo; no obvious relationship here
 f_titanic %>% filter(fare<500) %>% ggplot()+geom_point(aes(age,fare))+geom_smooth(aes(age,fare),method="lm") #here it is without the high fares
 f_titanic %>% filter(fare>500)
 
@@ -63,7 +63,7 @@ ggplot(data=f_titanic,aes(fare,..density..))+geom_freqpoly(aes(color=embarked))
 #categorical-continuous
 s1<-ggplot(data=f_titanic,aes(age,..density..)) + 
   geom_freqpoly(aes(color=survived)) +
-  theme(legend.position="bottom") #similar pattern in age distrubtion by survival
+  theme(legend.position="bottom") #similar pattern in age distribution by survival
 s2<-ggplot(f_titanic,aes(survived,age)) +
   stat_summary(geom="bar",fill="steelblue") +
   stat_summary(geom="errorbar")

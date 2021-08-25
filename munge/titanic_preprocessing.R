@@ -14,7 +14,8 @@ library(stringr)
 #I. Data import
 #**************
 titanic<-read_csv(here("data","raw_data","train.csv"),
-                  col_types="iffcfniicncf")
+                  col_types="iffcfniicncc")
+#note: Embarked (last column) was purposely read in as a character string (see below)
 titanic
 
 
@@ -29,15 +30,18 @@ head(titanic,n=10); tail(titanic,n=10) #check top/bottom of tibble
 
 #2. Data cleaning
 titanic<-clean_names(titanic) #clean names
-titanic<-relocate(titanic,survived,before=passenger_id) #rearranges cols
+titanic<-relocate(titanic,survived,.before=passenger_id) #rearranges cols
 levels(titanic$pclass) #not in numerical order
 titanic$pclass<-fct_relevel(titanic$pclass,c("1","2","3"))
+titanic$embarked<-factor(titanic$embarked) #convert embarked to a factor
+levels(titanic$embarked); tabyl(titanic$embarked) 
+#3 levels + NAs; reading in as a factor produced an empty factor level, and this solves the problem
 
 
 #3. Data imputation
 #assess missing data
 vis_miss(titanic)
-#lots of cabin data missing, about 20% age data missing, and 2 emabrked data missing
+#lots of cabin data missing, about 20% age data missing, and 2 embarked data missing
 
 #impute data
 titanic$cabin[is.na(titanic$cabin)]<-"unknown_other" #replace NAs with unknown_other
